@@ -11,3 +11,32 @@ spring:
       ddl-auto: validate
   flyway:
     enabled: true
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: notifications
+    password: notifications
+    template:
+      reply-timeout: 5s
+      retry:
+        enabled: true
+        max-attempts: 3
+        initial-interval: 200ms
+        multiplier: 2
+        max-interval: 2s
+
+notification:
+  rabbitmq:
+    exchange: notifications
+    mail-send:
+      queue: notifications.mail.send
+      routing-key: mail.send
+    mail-status:
+      queue: notifications.mail.status
+      routing-key: mail.status
+    sms-send:
+      queue: notifications.sms.send
+      routing-key: sms.send
+    push-send:
+      queue: notifications.push.send
+      routing-key: push.send
