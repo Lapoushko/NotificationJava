@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,9 +17,14 @@ import org.lapoushko.notification.contracts.mail.GetMailStatusResponse;
 import org.lapoushko.notification.contracts.mail.SendMailNotificationRequest;
 import org.lapoushko.notification.infrastructure.messaging.RabbitMqProperties;
 import org.lapoushko.notification.infrastructure.messaging.RabbitMqProperties.Route;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.amqp.core.Message;
+import org.springframework.amqp.core.MessagePostProcessor;
+import org.springframework.amqp.core.MessageProperties;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.boot.autoconfigure.amqp.RabbitProperties;
 import org.springframework.core.ParameterizedTypeReference;
 
 @ExtendWith(MockitoExtension.class)
@@ -38,7 +44,9 @@ class RabbitMqMailConnectionServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new RabbitMqMailConnectionService(rabbitTemplate, PROPERTIES);
+        RabbitProperties rabbitProperties = new RabbitProperties();
+        rabbitProperties.getTemplate().setReplyTimeout(Duration.ofSeconds(3));
+        service = new RabbitMqMailConnectionService(rabbitTemplate, PROPERTIES, rabbitProperties);
     }
 
     @Test
@@ -54,8 +62,8 @@ class RabbitMqMailConnectionServiceTest {
     @Test
     void getMailStatus_returnsReplyFromMailService() {
         GetMailStatusRequest request = new GetMailStatusRequest(UUID.randomUUID());
-        when(rabbitTemplate.convertSendAndReceiveAsType(
-                eq("notifications"), eq("mail.status"), eq(request), any(ParameterizedTypeReference.class)))
+        when(rabbitTemplate.convertSendAndReceiveAsType(eq("notifications"), eq("mail.status"), eq(request),
+                any(MessagePostProcessor.class), any(ParameterizedTypeReference.class)))
                 .thenReturn(new GetMailStatusResponse(2));
 
         assertThat(service.getMailStatus(request)).contains(new GetMailStatusResponse(2));
@@ -64,10 +72,23 @@ class RabbitMqMailConnectionServiceTest {
     @Test
     void getMailStatus_returnsEmptyWhenReplyTimedOut() {
         GetMailStatusRequest request = new GetMailStatusRequest(UUID.randomUUID());
-        when(rabbitTemplate.convertSendAndReceiveAsType(
-                eq("notifications"), eq("mail.status"), eq(request), any(ParameterizedTypeReference.class)))
+        when(rabbitTemplate.convertSendAndReceiveAsType(eq("notifications"), eq("mail.status"), eq(request),
+                any(MessagePostProcessor.class), any(ParameterizedTypeReference.class)))
                 .thenReturn(null);
 
         assertThat(service.getMailStatus(request)).isEmpty();
+    }
+
+    @Test
+    void getMailStatus_expiresRequestAfterReplyTimeout() {
+        GetMailStatusRequest request = new GetMailStatusRequest(UUID.randomUUID());
+
+        service.getMailStatus(request);
+
+        ArgumentCaptor<MessagePostProcessor> captor = ArgumentCaptor.forClass(MessagePostProcessor.class);
+        verify(rabbitTemplate).convertSendAndReceiveAsType(eq("notifications"), eq("mail.status"), eq(request),
+                captor.capture(), any(ParameterizedTypeReference.class));
+        Message message = captor.getValue().postProcessMessage(new Message(new byte[0], new MessageProperties()));
+        assertThat(message.getMessageProperties().getExpiration()).isEqualTo("3000");
     }
 }
